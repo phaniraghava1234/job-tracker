@@ -21,7 +21,7 @@ def run_write(sql, params):
 
 # ---------- constants ----------
 OUTREACH_SOURCES  = ["Cold outreach", "They reached out", "Alumni", "Referral", "Recruiter", "Other"]
-CV_VERSIONS       = ["Cat 1 Design & Performance", "Cat 2 Methods & SciML", "Other"]
+CV_VERSIONS = ["Cat 1 Design & Performance", "Cat 2 Methods & SciML", "Custom", "Other"]
 OUTREACH_STATUSES = ["Active", "Waiting", "Replied", "Closed – no reply", "Closed – converted"]
 REPLY_TYPES       = ["Interested", "Not now", "Rejected", "Referred me", "Auto-reply", "No reply"]
 
@@ -167,12 +167,17 @@ elif page == "Outreach":
                 person_name  = st.text_input("Person name *")
                 company      = st.text_input("Company")
                 role_title   = st.text_input("Role / title")
+                location     = st.text_input("Person's location (city, country)")
                 email        = st.text_input("Email")
                 linkedin_url = st.text_input("LinkedIn URL")
                 source       = st.selectbox("Source", OUTREACH_SOURCES)
             with c2:
                 first_contact_date = st.date_input("First contact date *", value=date.today())
                 cv_version = st.selectbox("CV version used", CV_VERSIONS)
+                cv_custom_url = ""
+                if cv_version == "Custom":
+                    cv_custom_url = st.text_input("Custom CV URL")
+                portfolio_url = st.text_input("Portfolio link", value="https://phaniraghava1234.github.io")
                 sent_from  = st.text_input("Sent from (your email)", value="phaniraghava1234@gmail.com")
                 status     = st.selectbox("Status", OUTREACH_STATUSES)
                 notes      = st.text_area("Notes")
@@ -183,11 +188,13 @@ elif page == "Outreach":
                 else:
                     run_write("""
                         INSERT INTO outreach
-                            (person_name, company, role_title, email, linkedin_url,
-                             source, first_contact_date, cv_version, sent_from, status, notes)
+                            (person_name, company, role_title, location, email, linkedin_url,
+                             source, first_contact_date, cv_version, cv_custom_url, portfolio_url,
+                             sent_from, status, notes)
                         VALUES
-                            (:person_name, :company, :role_title, :email, :linkedin_url,
-                             :source, :first_contact_date, :cv_version, :sent_from, :status, :notes)
+                            (:person_name, :company, :role_title, :location, :email, :linkedin_url,
+                             :source, :first_contact_date, :cv_version, :cv_custom_url, :portfolio_url,
+                             :sent_from, :status, :notes)
                     """, locals())
                     st.success(f"Added {person_name}.")
 
@@ -267,8 +274,12 @@ elif page == "Applications":
             with c2:
                 date_applied      = st.date_input("Date applied *", value=date.today())
                 cv_category       = st.selectbox("CV category", CV_VERSIONS)
+                cv_custom_url = ""
+                if cv_category == "Custom":
+                    cv_custom_url = st.text_input("Custom CV URL")
                 cv_file_link      = st.text_input("CV file (Google Drive link)")
                 cover_letter_link = st.text_input("Cover letter (Google Drive link)")
+                portfolio_url     = st.text_input("Portfolio link", value="https://phaniraghava1234.github.io")
                 source            = st.selectbox("Source", APP_SOURCES)
                 salary_range      = st.text_input("Salary range")
 
@@ -286,20 +297,20 @@ elif page == "Applications":
                         contact_person_id = int(contact_pick.split("—")[0].strip().lstrip("#"))
                     run_write("""
                         INSERT INTO applications
-                            (job_title, company, job_id, location, country, cv_category,
-                             cv_file_link, cover_letter_link, job_posting_url, date_applied,
+                            (job_title, company, job_id, location, country, cv_category, cv_custom_url,
+                             cv_file_link, cover_letter_link, portfolio_url, job_posting_url, date_applied,
                              source, salary_range, contact_person_id, notes)
                         VALUES
-                            (:job_title, :company, :job_id, :location, :country, :cv_category,
-                             :cv_file_link, :cover_letter_link, :job_posting_url, :date_applied,
+                            (:job_title, :company, :job_id, :location, :country, :cv_category, :cv_custom_url,
+                             :cv_file_link, :cover_letter_link, :portfolio_url, :job_posting_url, :date_applied,
                              :source, :salary_range, :contact_person_id, :notes)
                     """, {"job_title": job_title, "company": company, "job_id": job_id,
                           "location": location, "country": country, "cv_category": cv_category,
-                          "cv_file_link": cv_file_link, "cover_letter_link": cover_letter_link,
+                          "cv_custom_url": cv_custom_url, "cv_file_link": cv_file_link,
+                          "cover_letter_link": cover_letter_link, "portfolio_url": portfolio_url,
                           "job_posting_url": job_posting_url, "date_applied": date_applied,
                           "source": source, "salary_range": salary_range,
                           "contact_person_id": contact_person_id, "notes": notes})
-                    st.success(f"Added: {job_title} @ {company}")
 
     with tab_edit:
         apps = conn.query("SELECT id, job_title, company, status FROM applications ORDER BY id DESC", ttl=0)
