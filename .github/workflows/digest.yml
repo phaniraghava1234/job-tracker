@@ -5,7 +5,7 @@ on:
     # 06:00 UTC = 08:00 Toulouse (CEST, summer) / 07:00 Toulouse (CET, winter).
     # GitHub Actions cron uses UTC and does not follow DST.
     # If you want strict 08:00 local year-round, edit twice a year.
-    - cron: "0 6 * * *"
+    - cron: "2 7 * * *"
   workflow_dispatch:  # lets you trigger manually from the Actions tab
 
 jobs:
