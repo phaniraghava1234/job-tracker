@@ -21,14 +21,37 @@ def run_write(sql, params):
 
 # ---------- constants ----------
 OUTREACH_SOURCES  = ["Cold outreach", "They reached out", "Alumni", "Referral", "Recruiter", "Other"]
-CV_VERSIONS = ["Cat 1 Design & Performance", "Cat 2 Methods & SciML", "Custom", "Other"]
-OUTREACH_STATUSES = ["Active", "Waiting", "Replied", "Closed – no reply", "Closed – converted"]
+CV_VERSIONS       = ["Cat 1 Design & Performance", "Cat 2 Methods & SciML", "Custom", "Other"]
+OUTREACH_STATUSES = ["Active", "Waiting", "Replied", "Bounced", "Wrong person",
+                    "Intro'd me", "Ghosted", "Closed – no reply", "Closed – converted"]
 REPLY_TYPES       = ["Interested", "Not now", "Rejected", "Referred me", "Auto-reply", "No reply"]
 
 APP_SOURCES  = ["LinkedIn", "Company site", "Referral", "Recruiter", "Apify pull", "Other"]
 APP_STATUSES = ["Applied", "Under review", "HR screen", "Tech interview 1",
-                "Tech interview 2", "Final round", "Offer", "Rejected", "Withdrew", "Ghosted"]
+                "Tech interview 2", "Final round", "Offer", "Rejected",
+                "Withdrew", "Not interested anymore", "Ghosted"]
 COUNTRIES    = ["France", "Germany", "UK", "Netherlands", "Belgium", "Switzerland", "India", "Other"]
+
+# ---------- diff helpers for st.data_editor ----------
+def _norm(v):
+    """Normalize a pandas cell value to Python/SQL-friendly form."""
+    if v is None:
+        return None
+    try:
+        if pd.isna(v):
+            return None
+    except (TypeError, ValueError):
+        pass
+    # Convert pandas Timestamps to date for DATE columns
+    if isinstance(v, pd.Timestamp):
+        return v.date()
+    return v
+
+def _changed(old, new):
+    o, n = _norm(old), _norm(new)
+    if o is None and n is None:
+        return False
+    return o != n
 
 # ---------- sidebar ----------
 page = st.sidebar.radio("Navigation", ["Dashboard", "Outreach", "Applications"])
@@ -47,7 +70,8 @@ if page == "Dashboard":
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Total applications", len(apps))
     c2.metric("Active pipeline",
-              int((~apps["status"].isin(["Rejected", "Withdrew", "Ghosted"])).sum()) if len(apps) else 0)
+              int((~apps["status"].isin(["Rejected", "Withdrew",
+                                         "Not interested anymore", "Ghosted"])).sum()) if len(apps) else 0)
     c3.metric("People contacted", len(outr))
     c4.metric("Reply rate",
               f"{outr['reply_received'].mean()*100:.0f}%" if len(outr) else "—")
@@ -67,7 +91,8 @@ if page == "Dashboard":
                followup_2_sent, status
         FROM outreach
         WHERE follow_up_needed = TRUE
-          AND status NOT IN ('Closed – no reply', 'Closed – converted', 'Replied')
+          AND status NOT IN ('Closed – no reply', 'Closed – converted', 'Replied',
+                             'Bounced', 'Wrong person', 'Ghosted')
           AND (
             (followup_1_sent IS NULL
               AND (first_contact_date + INTERVAL '7 days')::date <= :cutoff)
@@ -142,8 +167,9 @@ if page == "Dashboard":
 # ============================================================
 elif page == "Outreach":
     st.title("👥 Outreach")
-    tab_view, tab_add, tab_edit = st.tabs(["View & filter", "Add contact", "Edit / mark actions"])
+    tab_view, tab_add, tab_edit = st.tabs(["View & edit", "Add contact", "Actions (buttons)"])
 
+    # ---------- Inline edit table ----------
     with tab_view:
         outr = conn.query("SELECT * FROM outreach ORDER BY first_contact_date DESC", ttl=30)
         c1, c2, c3 = st.columns(3)
@@ -157,9 +183,57 @@ elif page == "Outreach":
         view = outr[outr["status"].isin(status_f) & outr["cv_version"].isin(cv_f)]
         if company_f:
             view = view[view["company"].str.contains(company_f, case=False, na=False)]
-        st.dataframe(view, hide_index=True, use_container_width=True)
-        st.caption(f"{len(view)} of {len(outr)} rows")
 
+        st.caption(f"{len(view)} of {len(outr)} rows — edit any cell then click 'Save changes'")
+
+        if len(view):
+            edited = st.data_editor(
+                view,
+                hide_index=True,
+                use_container_width=True,
+                num_rows="fixed",
+                disabled=["id", "created_at", "updated_at"],
+                key="outr_editor",
+                column_config={
+                    "status":            st.column_config.SelectboxColumn("Status", options=OUTREACH_STATUSES, required=True),
+                    "cv_version":        st.column_config.SelectboxColumn("CV version", options=CV_VERSIONS),
+                    "source":            st.column_config.SelectboxColumn("Source", options=OUTREACH_SOURCES),
+                    "reply_type":        st.column_config.SelectboxColumn("Reply type", options=REPLY_TYPES),
+                    "first_contact_date": st.column_config.DateColumn("First contact"),
+                    "reply_date":        st.column_config.DateColumn("Reply date"),
+                    "followup_1_sent":   st.column_config.DateColumn("Follow-up 1 sent"),
+                    "followup_2_sent":   st.column_config.DateColumn("Follow-up 2 sent"),
+                    "reply_received":    st.column_config.CheckboxColumn("Reply received"),
+                    "follow_up_needed":  st.column_config.CheckboxColumn("Follow-up needed"),
+                    "linkedin_url":      st.column_config.LinkColumn("LinkedIn"),
+                    "cv_custom_url":     st.column_config.LinkColumn("Custom CV URL"),
+                    "portfolio_url":     st.column_config.LinkColumn("Portfolio"),
+                },
+            )
+
+            if st.button("💾 Save changes", key="outr_save"):
+                editable_cols = [c for c in view.columns if c not in ["id", "created_at", "updated_at"]]
+                changes = 0
+                for _, new_row in edited.iterrows():
+                    old_row = view.loc[view["id"] == new_row["id"]].iloc[0]
+                    diffs = {c: _norm(new_row[c]) for c in editable_cols if _changed(old_row[c], new_row[c])}
+                    if not diffs:
+                        continue
+                    set_clauses = ", ".join(f"{c} = :{c}" for c in diffs)
+                    params = dict(diffs)
+                    params["id"] = int(new_row["id"])
+                    run_write(f"UPDATE outreach SET {set_clauses}, updated_at = NOW() WHERE id = :id", params)
+                    changes += 1
+
+                if changes:
+                    st.success(f"Saved {changes} row(s).")
+                    st.rerun()
+                else:
+                    st.info("No changes to save.")
+        else:
+            st.info("No rows match the filters.")
+
+    # ---------- Add contact form ----------
     with tab_add:
         with st.form("add_outreach", clear_on_submit=True):
             c1, c2 = st.columns(2)
@@ -195,9 +269,15 @@ elif page == "Outreach":
                             (:person_name, :company, :role_title, :location, :email, :linkedin_url,
                              :source, :first_contact_date, :cv_version, :cv_custom_url, :portfolio_url,
                              :sent_from, :status, :notes)
-                    """, locals())
+                    """, {"person_name": person_name, "company": company, "role_title": role_title,
+                          "location": location, "email": email, "linkedin_url": linkedin_url,
+                          "source": source, "first_contact_date": first_contact_date,
+                          "cv_version": cv_version, "cv_custom_url": cv_custom_url,
+                          "portfolio_url": portfolio_url, "sent_from": sent_from,
+                          "status": status, "notes": notes})
                     st.success(f"Added {person_name}.")
 
+    # ---------- Structured action buttons ----------
     with tab_edit:
         outr = conn.query("SELECT id, person_name, company, status FROM outreach ORDER BY id DESC", ttl=0)
         if not len(outr):
@@ -242,8 +322,10 @@ elif page == "Outreach":
 # ============================================================
 elif page == "Applications":
     st.title("💼 Applications")
-    tab_view, tab_add, tab_edit = st.tabs(["View & filter", "Add application", "Update status"])
+    tab_view, tab_add, tab_edit, tab_history = st.tabs(
+        ["View & edit", "Add application", "Update status", "Status history"])
 
+    # ---------- Inline edit table ----------
     with tab_view:
         apps = conn.query("SELECT * FROM applications ORDER BY date_applied DESC", ttl=30)
         c1, c2, c3 = st.columns(3)
@@ -257,9 +339,77 @@ elif page == "Applications":
         view = apps[apps["status"].isin(status_f) & apps["country"].isin(country_f)]
         if company_f:
             view = view[view["company"].str.contains(company_f, case=False, na=False)]
-        st.dataframe(view, hide_index=True, use_container_width=True)
-        st.caption(f"{len(view)} of {len(apps)} rows")
 
+        st.caption(f"{len(view)} of {len(apps)} rows — edit any cell then click 'Save changes'. "
+                   "Editing status auto-updates 'last_status_change' and logs it in Status history.")
+
+        if len(view):
+            edited = st.data_editor(
+                view,
+                hide_index=True,
+                use_container_width=True,
+                num_rows="fixed",
+                disabled=["id", "created_at", "updated_at", "contact_person_id",
+                          "last_status_change_reason"],
+                key="apps_editor",
+                column_config={
+                    "status":              st.column_config.SelectboxColumn("Status", options=APP_STATUSES, required=True),
+                    "cv_category":         st.column_config.SelectboxColumn("CV category", options=CV_VERSIONS),
+                    "country":             st.column_config.SelectboxColumn("Country", options=COUNTRIES),
+                    "source":              st.column_config.SelectboxColumn("Source", options=APP_SOURCES),
+                    "date_applied":        st.column_config.DateColumn("Date applied"),
+                    "last_status_change":  st.column_config.DateColumn("Last status change"),
+                    "follow_up_needed":    st.column_config.CheckboxColumn("Follow-up needed"),
+                    "cv_file_link":        st.column_config.LinkColumn("CV link"),
+                    "cover_letter_link":   st.column_config.LinkColumn("Cover letter"),
+                    "job_posting_url":     st.column_config.LinkColumn("Job posting"),
+                    "portfolio_url":       st.column_config.LinkColumn("Portfolio"),
+                    "cv_custom_url":       st.column_config.LinkColumn("Custom CV URL"),
+                },
+            )
+
+            if st.button("💾 Save changes", key="apps_save"):
+                editable_cols = [c for c in view.columns if c not in
+                                 ["id", "created_at", "updated_at", "contact_person_id",
+                                  "last_status_change_reason"]]
+                changes = 0
+                for _, new_row in edited.iterrows():
+                    old_row = view.loc[view["id"] == new_row["id"]].iloc[0]
+                    diffs = {c: _norm(new_row[c]) for c in editable_cols if _changed(old_row[c], new_row[c])}
+                    if not diffs:
+                        continue
+
+                    aid = int(new_row["id"])
+                    status_changed = "status" in diffs and diffs["status"] != _norm(old_row["status"])
+                    date_manually_edited = "last_status_change" in diffs and not status_changed
+
+                    if status_changed:
+                        # Log the change and set last_status_change = today
+                        run_write("""
+                            INSERT INTO status_change_log
+                                (application_id, changed_on, old_status, new_status, change_source)
+                            VALUES (:aid, CURRENT_DATE, :old, :new, 'inline_edit')
+                        """, {"aid": aid, "old": _norm(old_row["status"]), "new": diffs["status"]})
+                        diffs["last_status_change"] = date.today()
+                        diffs["last_status_change_reason"] = "Status changed (inline)"
+                    elif date_manually_edited:
+                        diffs["last_status_change_reason"] = "Manual date edit"
+
+                    set_clauses = ", ".join(f"{c} = :{c}" for c in diffs)
+                    params = dict(diffs)
+                    params["id"] = aid
+                    run_write(f"UPDATE applications SET {set_clauses}, updated_at = NOW() WHERE id = :id", params)
+                    changes += 1
+
+                if changes:
+                    st.success(f"Saved {changes} row(s).")
+                    st.rerun()
+                else:
+                    st.info("No changes to save.")
+        else:
+            st.info("No rows match the filters.")
+
+    # ---------- Add application form (status now between country and CV category) ----------
     with tab_add:
         contacts = conn.query("SELECT id, person_name, company FROM outreach ORDER BY id DESC", ttl=30)
         with st.form("add_app", clear_on_submit=True):
@@ -270,6 +420,7 @@ elif page == "Applications":
                 job_id          = st.text_input("Job ID / req number")
                 location        = st.text_input("Location")
                 country         = st.selectbox("Country", COUNTRIES)
+                status          = st.selectbox("Status", APP_STATUSES, index=0)
                 job_posting_url = st.text_input("Job posting URL")
             with c2:
                 date_applied      = st.date_input("Date applied *", value=date.today())
@@ -297,21 +448,28 @@ elif page == "Applications":
                         contact_person_id = int(contact_pick.split("—")[0].strip().lstrip("#"))
                     run_write("""
                         INSERT INTO applications
-                            (job_title, company, job_id, location, country, cv_category, cv_custom_url,
-                             cv_file_link, cover_letter_link, portfolio_url, job_posting_url, date_applied,
-                             source, salary_range, contact_person_id, notes)
+                            (job_title, company, job_id, location, country, status,
+                             cv_category, cv_custom_url, cv_file_link, cover_letter_link,
+                             portfolio_url, job_posting_url, date_applied, last_status_change,
+                             last_status_change_reason, source, salary_range,
+                             contact_person_id, notes)
                         VALUES
-                            (:job_title, :company, :job_id, :location, :country, :cv_category, :cv_custom_url,
-                             :cv_file_link, :cover_letter_link, :portfolio_url, :job_posting_url, :date_applied,
-                             :source, :salary_range, :contact_person_id, :notes)
+                            (:job_title, :company, :job_id, :location, :country, :status,
+                             :cv_category, :cv_custom_url, :cv_file_link, :cover_letter_link,
+                             :portfolio_url, :job_posting_url, :date_applied, :date_applied,
+                             'Initial entry', :source, :salary_range,
+                             :contact_person_id, :notes)
                     """, {"job_title": job_title, "company": company, "job_id": job_id,
-                          "location": location, "country": country, "cv_category": cv_category,
-                          "cv_custom_url": cv_custom_url, "cv_file_link": cv_file_link,
-                          "cover_letter_link": cover_letter_link, "portfolio_url": portfolio_url,
-                          "job_posting_url": job_posting_url, "date_applied": date_applied,
-                          "source": source, "salary_range": salary_range,
+                          "location": location, "country": country, "status": status,
+                          "cv_category": cv_category, "cv_custom_url": cv_custom_url,
+                          "cv_file_link": cv_file_link, "cover_letter_link": cover_letter_link,
+                          "portfolio_url": portfolio_url, "job_posting_url": job_posting_url,
+                          "date_applied": date_applied, "source": source,
+                          "salary_range": salary_range,
                           "contact_person_id": contact_person_id, "notes": notes})
+                    st.success(f"Added: {job_title} @ {company}")
 
+    # ---------- Structured status update ----------
     with tab_edit:
         apps = conn.query("SELECT id, job_title, company, status FROM applications ORDER BY id DESC", ttl=0)
         if not len(apps):
@@ -325,9 +483,18 @@ elif page == "Applications":
                                       index=APP_STATUSES.index(row["status"]) if row["status"] in APP_STATUSES else 0)
             c1, c2 = st.columns(2)
             if c1.button("Update status"):
+                if new_status != row["status"]:
+                    run_write("""
+                        INSERT INTO status_change_log
+                            (application_id, changed_on, old_status, new_status, change_source)
+                        VALUES (:aid, CURRENT_DATE, :old, :new, 'status_update')
+                    """, {"aid": int(row["id"]), "old": row["status"], "new": new_status})
                 run_write("""
                     UPDATE applications
-                    SET status = :s, last_status_change = CURRENT_DATE, updated_at = NOW()
+                    SET status = :s,
+                        last_status_change = CURRENT_DATE,
+                        last_status_change_reason = 'Status changed (Update tab)',
+                        updated_at = NOW()
                     WHERE id = :id
                 """, {"s": new_status, "id": int(row["id"])})
                 st.success(f"Status → {new_status}")
@@ -335,3 +502,19 @@ elif page == "Applications":
                 run_write("UPDATE applications SET follow_up_needed = NOT follow_up_needed, updated_at = NOW() WHERE id = :id",
                           {"id": int(row["id"])})
                 st.success("Toggled.")
+
+    # ---------- Status change history audit trail ----------
+    with tab_history:
+        st.caption("Every status change is logged here — inline edits, Update-tab actions, and initial entries.")
+        history = conn.query("""
+            SELECT l.id, l.application_id, a.job_title, a.company,
+                   l.changed_on, l.old_status, l.new_status, l.change_source, l.logged_at
+            FROM status_change_log l
+            LEFT JOIN applications a ON a.id = l.application_id
+            ORDER BY l.logged_at DESC
+            LIMIT 500
+        """, ttl=15)
+        if len(history):
+            st.dataframe(history, hide_index=True, use_container_width=True)
+        else:
+            st.info("No status changes logged yet.")
