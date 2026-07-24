@@ -1,0 +1,36 @@
+name: Daily digest
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  schedule:
+    # 06:00 UTC = 08:00 Toulouse (CEST, summer) / 07:00 Toulouse (CET, winter).
+    # GitHub Actions cron uses UTC and does not follow DST.
+    # If you want strict 08:00 local year-round, edit twice a year..
+   - cron: "*/10 * * * *"
+  workflow_dispatch:  # lets you trigger manually from the Actions tab
+  #repository_dispatch:
+   # types: [digest]
+
+jobs:
+  send-digest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deps
+        run: pip install sqlalchemy psycopg2-binary
+
+      - name: Run digest
+        env:
+          NEON_URL:            ${{ secrets.NEON_URL }}
+          GMAIL_FROM:          ${{ secrets.GMAIL_FROM }}
+          GMAIL_APP_PASSWORD:  ${{ secrets.GMAIL_APP_PASSWORD }}
+          GMAIL_TO:            ${{ secrets.GMAIL_TO }}
+        run: python digest.py
