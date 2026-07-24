@@ -184,8 +184,42 @@ elif page == "Outreach":
         if company_f:
             view = view[view["company"].str.contains(company_f, case=False, na=False)]
 
+        preferred_order = [
+            "id", "person_name", "company", "role_title", "status",
+            "first_contact_date", "followup_1_sent", "followup_2_sent",
+            "reply_received", "reply_type", "reply_date",
+            "follow_up_needed", "cv_version", "source", "location",
+            "email", "linkedin_url", "sent_from",
+            "cv_custom_url", "portfolio_url", "notes",
+            "created_at", "updated_at",
+        ]
+        view = view[[c for c in preferred_order if c in view.columns]]
+
         st.caption(f"{len(view)} of {len(outr)} rows — edit any cell then click 'Save changes'")
 
+        if len(view):
+            status_colors = {
+                "Active": "#1a73e8",
+                "Waiting": "#f9ab00",
+                "Replied": "#0b8043",
+                "Intro'd me": "#0b8043",
+                "Bounced": "#d93025",
+                "Wrong person": "#5f6368",
+                "Ghosted": "#d93025",
+                "Closed – no reply": "#5f6368",
+                "Closed – converted": "#0b8043",
+            }
+            counts = view["status"].value_counts()
+            chips = []
+            for status, count in counts.items():
+                color = status_colors.get(status, "#5f6368")
+                chips.append(
+                    f"<span style='display:inline-block;background:{color};color:white;"
+                    f"padding:4px 10px;border-radius:12px;margin:2px;font-size:13px;font-weight:600'>"
+                    f"{status}: {count}</span>"
+                )
+            st.markdown(" ".join(chips), unsafe_allow_html=True)
+        
         if len(view):
             edited = st.data_editor(
                 view,
@@ -340,9 +374,47 @@ elif page == "Applications":
         if company_f:
             view = view[view["company"].str.contains(company_f, case=False, na=False)]
 
+        # Reorder columns so status shows early, followed by key dates
+        preferred_order = [
+            "id", "job_title", "company", "country", "status",
+            "last_status_change", "date_applied", "cv_category",
+            "follow_up_needed", "job_id", "location",
+            "cv_file_link", "cover_letter_link", "portfolio_url",
+            "cv_custom_url", "job_posting_url", "source",
+            "salary_range", "last_status_change_reason",
+            "contact_person_id", "notes", "created_at", "updated_at",
+        ]
+        view = view[[c for c in preferred_order if c in view.columns]]
+
         st.caption(f"{len(view)} of {len(apps)} rows — edit any cell then click 'Save changes'. "
                    "Editing status auto-updates 'last_status_change' and logs it in Status history.")
 
+        # Coloured status summary above the editor (editor itself can't style cells)
+        if len(view):
+            status_colors = {
+                "Applied": "#1a73e8",
+                "Under review": "#f9ab00",
+                "HR screen": "#f9ab00",
+                "Tech interview 1": "#137333",
+                "Tech interview 2": "#137333",
+                "Final round": "#137333",
+                "Offer": "#0b8043",
+                "Rejected": "#d93025",
+                "Withdrew": "#5f6368",
+                "Not interested anymore": "#5f6368",
+                "Ghosted": "#d93025",
+            }
+            counts = view["status"].value_counts()
+            chips = []
+            for status, count in counts.items():
+                color = status_colors.get(status, "#5f6368")
+                chips.append(
+                    f"<span style='display:inline-block;background:{color};color:white;"
+                    f"padding:4px 10px;border-radius:12px;margin:2px;font-size:13px;font-weight:600'>"
+                    f"{status}: {count}</span>"
+                )
+            st.markdown(" ".join(chips), unsafe_allow_html=True)
+        
         if len(view):
             edited = st.data_editor(
                 view,
