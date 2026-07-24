@@ -1,6 +1,10 @@
 name: Daily digest
 
 on:
+  push:
+    branches:
+      - main
+      - master
   schedule:
     # 06:00 UTC = 08:00 Toulouse (CEST, summer) / 07:00 Toulouse (CET, winter).
     # GitHub Actions cron uses UTC and does not follow DST.
