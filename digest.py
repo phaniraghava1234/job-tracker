@@ -10,7 +10,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from sqlalchemy import create_engine, text
 
-NEON_URL   = os.environ["NEON_URL"]
+NEON_URL = os.environ["NEON_URL"].replace("postgresql+psycopg://", "postgresql+psycopg2://")
 GMAIL_FROM = os.environ["GMAIL_FROM"]
 GMAIL_PW   = os.environ["GMAIL_APP_PASSWORD"].replace(" ", "")
 GMAIL_TO   = os.environ["GMAIL_TO"]
