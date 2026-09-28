@@ -9,8 +9,9 @@ from datetime import date
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from sqlalchemy import create_engine, text
+from sqlalchemy.engine import make_url
 
-NEON_URL = os.environ["NEON_URL"].replace("postgresql+psycopg://", "postgresql+psycopg2://")
+NEON_URL = os.environ["NEON_URL"]
 GMAIL_FROM = os.environ["GMAIL_FROM"]
 GMAIL_PW   = os.environ["GMAIL_APP_PASSWORD"].replace(" ", "")
 GMAIL_TO   = os.environ["GMAIL_TO"]
@@ -31,7 +32,7 @@ APP_ACTIVE = (
     "'Tech interview 1', 'Tech interview 2', 'Final round'"
 )
 
-engine = create_engine(NEON_URL)
+engine = create_engine(make_url(NEON_URL.strip().strip("\"'")).set(drivername="postgresql+psycopg2"))
 
 SQL_OUTREACH_DUE = f"""
     SELECT id, person_name, company, role_title, first_contact_date,
